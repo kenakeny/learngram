@@ -1,0 +1,10 @@
+[tool.uv.workspace]
+members = ["services/shared", "services/api", "services/ingestion"]
+
+[tool.uv.sources]
+learngram-shared = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "learngram-shared[gemini]",
+]

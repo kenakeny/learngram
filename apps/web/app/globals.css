@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg:            #0d0d0f;
+    --surface:       #141416;
+    --surface-2:     #1a1a1d;
+    --border:        rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.12);
+    --text:          #e8e8ea;
+    --text-muted:    #72747f;
+    --text-subtle:   #3e404a;
+  }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ── Tweet card ─────────────────────────────────────────────── */
+.tweet-card {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.tweet-card:hover { background: var(--surface); }
+
+/* ── Engage button ──────────────────────────────────────────── */
+.engage-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 99px;
+  color: var(--text-muted); font-size: 13px;
+  background: none; border: none; cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.engage-btn:hover { color: var(--text); background: var(--surface-2); }
+
+/* ── Feed scroll (center column inner) ─────────────────────── */
+.feed-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.feed-scroll::-webkit-scrollbar { display: none; }
+
+/* ── Tab header ─────────────────────────────────────────────── */
+.feed-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  height: 52px; font-size: 15px; font-weight: 500;
+  border: none; background: none; cursor: pointer;
+  color: var(--text-muted); position: relative;
+  transition: color 0.15s, background 0.15s;
+}
+.feed-tab:hover { background: var(--surface); color: var(--text); }
+.feed-tab.active { color: var(--text); font-weight: 700; }
+.feed-tab.active::after {
+  content: "";
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 64px; height: 3px; border-radius: 99px;
+  background: var(--text);
+}
+
+/* ── Nav rail ───────────────────────────────────────────────── */
+.nav-item-rail {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 16px; border-radius: 99px;
+  color: var(--text-muted); font-size: 20px; font-weight: 400;
+  text-decoration: none; white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-item-rail:hover { background: var(--surface-2); color: var(--text); }
+.nav-item-rail.active { color: var(--text); font-weight: 700; }
+
+/* ── Right sidebar card ─────────────────────────────────────── */
+.sidebar-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.sidebar-card-header {
+  padding: 16px;
+  font-size: 20px; font-weight: 800;
+  color: var(--text);
+}
+.sidebar-row {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  transition: background 0.1s;
+  cursor: pointer;
+}
+.sidebar-row:hover { background: var(--surface-2); }
+
+/* ── Bottom nav: mobile only ────────────────────────────────── */
+@media (min-width: 768px) {
+  .bottom-nav-mobile { display: none !important; }
+}
