@@ -1,5 +1,7 @@
 "use client";
 
+import { topicColor } from "@/lib/utils";
+
 const TRENDING = [
   { topic: "distributed-systems", label: "Distributed Systems", count: "29 concepts" },
   { topic: "databases",           label: "Databases",           count: "38 concepts" },
@@ -15,11 +17,6 @@ const SUGGESTIONS = [
   { name: "Kafka",             slug: "kafka",               topic: "messaging"           },
   { name: "Raft",              slug: "raft",                topic: "distributed-systems" },
 ];
-
-const TOPIC_COLOR: Record<string, string> = {
-  networking: "#6b9ab8", caching: "#b89a5a", databases: "#5aa87a",
-  "distributed-systems": "#9b8fc4", consistency: "#c47080", messaging: "#5ab0b0",
-};
 
 export function RightSidebar() {
   return (
@@ -74,7 +71,7 @@ export function RightSidebar() {
       <div className="sidebar-card">
         <div className="sidebar-card-header">Explore concepts</div>
         {SUGGESTIONS.map(({ name, slug, topic }) => {
-          const color = TOPIC_COLOR[topic] ?? "#72747f";
+          const color = topicColor(topic);
           return (
             <div key={slug} className="sidebar-row" style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{

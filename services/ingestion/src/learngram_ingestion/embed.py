@@ -20,19 +20,7 @@ from learngram_shared.config import settings
 from learngram_shared.embeddings.factory import get_embeddings
 from learngram_shared.vectors import to_pgvector
 
-CHUNK_SIZE    = 2000   # chars — matches the extraction chunker
-CHUNK_OVERLAP = 200
-
-
-def _chunk(text: str) -> list[str]:
-    chunks, start = [], 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        piece = text[start:end].strip()
-        if piece:
-            chunks.append(piece)
-        start = end - CHUNK_OVERLAP
-    return chunks
+from .text_utils import chunk as _chunk
 
 
 def _batched(items: list, size: int):

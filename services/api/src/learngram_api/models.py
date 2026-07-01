@@ -34,3 +34,13 @@ class GraphEdge(BaseModel):
 class GraphResponse(BaseModel):
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+class IngestJob(BaseModel):
+    id: str
+    filename: str
+    status: str          # pending | running | done | error
+    step: str
+    message: str
+    nodes_added: int
+    cards_added: int

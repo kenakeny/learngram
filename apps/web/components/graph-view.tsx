@@ -38,10 +38,16 @@ const TOPIC_COLOR: Record<string, string> = {
   "messaging":            "#06b6d4",
 };
 
-const DEFAULT_COLOR = "#72747f";
+// Known topics keep their vivid colors; AI-coined topics get a stable hashed hue.
+function colorFor(topic: string): string {
+  if (TOPIC_COLOR[topic]) return TOPIC_COLOR[topic];
+  let h = 0;
+  for (let i = 0; i < topic.length; i++) h = (Math.imul(h, 31) + topic.charCodeAt(i)) | 0;
+  return `hsl(${((h % 360) + 360) % 360} 65% 60%)`;
+}
 
 function KnowledgeNode({ data }: { data: { label: string; topic: string } }) {
-  const color = TOPIC_COLOR[data.topic] ?? DEFAULT_COLOR;
+  const color = colorFor(data.topic);
   return (
     <div
       style={{
@@ -100,6 +106,10 @@ function buildLayout(rawNodes: GraphNode[]): Node[] {
 
 export function GraphView({ nodes: rawNodes, edges: rawEdges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const nodes = useMemo(() => buildLayout(rawNodes), [rawNodes]);
+  const legendTopics = useMemo(
+    () => [...new Set(rawNodes.map((n) => n.topic))].sort(),
+    [rawNodes]
+  );
 
   const edges: Edge[] = useMemo(
     () =>
@@ -144,7 +154,7 @@ export function GraphView({ nodes: rawNodes, edges: rawEdges }: { nodes: GraphNo
         />
         <MiniMap
           style={{ background: "#141416", border: "1px solid rgba(255,255,255,0.07)" }}
-          nodeColor={(n) => TOPIC_COLOR[(n.data as { topic: string }).topic] ?? DEFAULT_COLOR}
+          nodeColor={(n) => colorFor((n.data as { topic: string }).topic)}
           maskColor="rgba(13,13,15,0.7)"
         />
       </ReactFlow>
@@ -155,9 +165,9 @@ export function GraphView({ nodes: rawNodes, edges: rawEdges }: { nodes: GraphNo
         background: "#141416", border: "1px solid rgba(255,255,255,0.07)",
         borderRadius: 10, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6,
       }}>
-        {Object.entries(TOPIC_COLOR).map(([topic, color]) => (
+        {legendTopics.map((topic) => (
           <div key={topic} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: colorFor(topic), flexShrink: 0 }} />
             <span style={{ fontSize: 11, color: "#72747f", textTransform: "capitalize" }}>
               {topic.replace(/-/g, " ")}
             </span>

@@ -5,11 +5,14 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
     "learngram-shared",
+    "learngram-ingestion",
 ]
 
 [tool.uv.sources]
 learngram-shared = { workspace = true }
+learngram-ingestion = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

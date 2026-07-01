@@ -12,26 +12,13 @@ import psycopg
 import trafilatura
 
 from learngram_shared.config import settings
+from ..text_utils import detect_topics
 
 RSS_FEEDS = [
     ("High Scalability",    "http://feeds.feedburner.com/HighScalability"),
     ("Cloudflare Blog",     "https://blog.cloudflare.com/rss/"),
     ("Netflix Tech Blog",   "https://netflixtechblog.com/feed"),
 ]
-
-# Only keep posts that likely cover our 6 topics
-_TOPIC_KEYS: list[tuple[str, list[str]]] = [
-    ("networking",           ["load balancer", "proxy", "cdn", "dns", "api gateway", "tcp", "http", "network"]),
-    ("caching",              ["cache", "redis", "memcached", "eviction"]),
-    ("databases",            ["database", "sql", "nosql", "sharding", "replication", "storage"]),
-    ("distributed-systems",  ["distributed", "cap", "consensus", "fault tolerance", "scalab"]),
-    ("consistency",          ["acid", "consistency", "eventual", "transaction"]),
-    ("messaging",            ["queue", "kafka", "pub/sub", "stream", "message"]),
-]
-
-def _detect_topics(text: str) -> list[str]:
-    lower = text.lower()
-    return [t for t, kws in _TOPIC_KEYS if any(k in lower for k in kws)]
 
 
 def _fetch_article(url: str) -> str | None:
@@ -87,7 +74,7 @@ def main(limit: int = 20) -> None:
                     print("too short / failed")
                     continue
 
-                topics = _detect_topics(title + " " + text)
+                topics = detect_topics(title + " " + text)
                 if not topics:
                     print("off-topic")
                     continue

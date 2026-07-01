@@ -7,7 +7,6 @@ splits each file by H2 (##) sections, and upserts each section as a document.
 Usage:  uv run ingest-primer
 """
 import io
-import re
 import sys
 import zipfile
 from pathlib import PurePosixPath
@@ -16,49 +15,22 @@ import httpx
 import psycopg
 
 from learngram_shared.config import settings
+from ..text_utils import detect_topics, split_markdown_by_h2
 
 REPO_ZIP = "https://github.com/donnemartin/system-design-primer/archive/refs/heads/master.zip"
 BASE_URL  = "https://github.com/donnemartin/system-design-primer/blob/master"
 
-# Rough keyword → topic mapping
-_TOPIC_KEYS: list[tuple[str, list[str]]] = [
-    ("networking",            ["load balancer", "proxy", "cdn", "dns", "api gateway", "tcp", "http"]),
-    ("caching",               ["cache", "redis", "memcached", "eviction", "bloom filter"]),
-    ("databases",             ["database", "sql", "nosql", "sharding", "replication", "index", "b-tree"]),
-    ("distributed-systems",   ["distributed", "cap theorem", "consistent hashing", "consensus", "raft", "paxos"]),
-    ("consistency",           ["acid", "base", "eventual consistency", "strong consistency", "idempotent"]),
-    ("messaging",             ["queue", "kafka", "pub/sub", "message broker", "backpressure"]),
-]
-
-def _detect_topics(text: str) -> list[str]:
-    lower = text.lower()
-    return [topic for topic, kws in _TOPIC_KEYS if any(k in lower for k in kws)] or ["distributed-systems"]
-
 
 def _split_by_h2(path_in_zip: str, content: str) -> list[dict]:
     """Split a markdown file into H2 sections, return list of section dicts."""
+    rel_path = "/".join(PurePosixPath(path_in_zip).parts[1:])  # strip repo root dir
     sections = []
-    # Split on lines starting with exactly ## (not ###)
-    parts = re.split(r"(?m)^(?=## )", content)
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        lines = part.splitlines()
-        heading = lines[0].lstrip("# ").strip()
-        body = "\n".join(lines[1:]).strip()
-        # Skip nav / TOC sections and sections with almost no text
-        if len(body) < 200 or heading.lower() in {"table of contents", "contributing", "license", "credits"}:
-            continue
-        # Derive GitHub URL: file path + anchor from heading
-        anchor = re.sub(r"[^a-z0-9\s-]", "", heading.lower()).strip().replace(" ", "-")
-        rel_path = "/".join(PurePosixPath(path_in_zip).parts[1:])  # strip repo root dir
-        source_url = f"{BASE_URL}/{rel_path}#{anchor}"
+    for sec in split_markdown_by_h2(content):
         sections.append({
-            "source_url":   source_url,
-            "title":        heading,
-            "cleaned_text": body,
-            "topic_tags":   _detect_topics(heading + " " + body),
+            "source_url":   f"{BASE_URL}/{rel_path}#{sec['anchor']}",
+            "title":        sec["heading"],
+            "cleaned_text": sec["body"],
+            "topic_tags":   detect_topics(sec["heading"] + " " + sec["body"], default=["distributed-systems"]),
         })
     return sections
 

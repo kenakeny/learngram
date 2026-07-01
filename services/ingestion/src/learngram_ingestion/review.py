@@ -24,6 +24,7 @@ from rich.table import Table
 from rich.text import Text
 
 from learngram_shared.config import settings
+from .graph_ops import approve_node, approve_edge
 
 console = Console()
 
@@ -96,56 +97,8 @@ def _edit_edge(payload: dict) -> dict:
     return p
 
 
-# ── Approve actions ────────────────────────────────────────────────────────────
-
-def _approve_node(conn: psycopg.Connection, proposal_id: uuid.UUID, payload: dict,
-                  doc_id: uuid.UUID | None) -> None:
-    node_id = conn.execute(
-        """
-        INSERT INTO nodes (name, slug, short_description, topic, depth_level)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (slug) DO NOTHING
-        RETURNING id
-        """,
-        (payload["name"], payload["slug"], payload["short_description"],
-         payload["topic"], int(payload["depth_level"])),
-    ).fetchone()
-
-    if node_id and doc_id:
-        conn.execute(
-            "INSERT INTO source_links (node_id, document_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-            (node_id[0], doc_id),
-        )
-
-    conn.execute(
-        "UPDATE proposals SET status='approved', reviewed_at=%s WHERE id=%s",
-        (datetime.now(timezone.utc), proposal_id),
-    )
-    conn.commit()
-
-
-def _approve_edge(conn: psycopg.Connection, proposal_id: uuid.UUID, payload: dict) -> None:
-    from_id = conn.execute("SELECT id FROM nodes WHERE slug=%s", (payload["from_slug"],)).fetchone()
-    to_id   = conn.execute("SELECT id FROM nodes WHERE slug=%s", (payload["to_slug"],)).fetchone()
-
-    if not from_id or not to_id:
-        console.print(f"  [red]Cannot approve: node slug not found in graph[/red]")
-        return
-
-    conn.execute(
-        """
-        INSERT INTO edges (from_node_id, to_node_id, relationship_type, weight)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT DO NOTHING
-        """,
-        (from_id[0], to_id[0], payload["relationship_type"], float(payload.get("weight", 1.0))),
-    )
-    conn.execute(
-        "UPDATE proposals SET status='approved', reviewed_at=%s WHERE id=%s",
-        (datetime.now(timezone.utc), proposal_id),
-    )
-    conn.commit()
-
+# ── Reject action ──────────────────────────────────────────────────────────────
+# (approve_node / approve_edge live in graph_ops so the auto pipeline can reuse them)
 
 def _reject(conn: psycopg.Connection, proposal_id: uuid.UUID) -> None:
     conn.execute(
@@ -239,19 +192,23 @@ def main() -> None:
                 console.print("[red]Rejected.[/red]")
             elif action == "a":
                 if kind == "node":
-                    _approve_node(conn, prop_id, payload, doc_id)
+                    approve_node(conn, prop_id, payload, doc_id)
                     existing_nodes[payload["slug"]] = payload["name"]
+                    console.print("[green]Approved.[/green]")
+                elif approve_edge(conn, prop_id, payload):
+                    console.print("[green]Approved.[/green]")
                 else:
-                    _approve_edge(conn, prop_id, payload)
-                console.print("[green]Approved.[/green]")
+                    console.print("[red]Cannot approve: endpoint node not found — left pending.[/red]")
             elif action == "e":
                 edited = _edit_node(payload) if kind == "node" else _edit_edge(payload)
                 if kind == "node":
-                    _approve_node(conn, prop_id, edited, doc_id)
+                    approve_node(conn, prop_id, edited, doc_id)
                     existing_nodes[edited["slug"]] = edited["name"]
+                    console.print("[green]Edited & approved.[/green]")
+                elif approve_edge(conn, prop_id, edited):
+                    console.print("[green]Edited & approved.[/green]")
                 else:
-                    _approve_edge(conn, prop_id, edited)
-                console.print("[green]Edited & approved.[/green]")
+                    console.print("[red]Cannot approve: endpoint node not found — left pending.[/red]")
             else:
                 console.print("[dim]Unknown key — skipped.[/dim]")
 

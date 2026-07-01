@@ -188,6 +188,73 @@ def build_cards(parts: dict) -> list[dict]:
     ]
 
 
+def generate_cards_for_nodes(conn, nodes, llm, embeddings, limiter, progress=None) -> tuple[int, int]:
+    """Generate RAG-grounded cards for each node row.
+
+    `nodes` is a list of (id, name, slug, topic, depth_level, short_description).
+    Returns (nodes_ok, cards_inserted). `progress(step, msg)` is called per node
+    when supplied (used by the ingest pipeline to report status).
+    """
+    ok = cards_added = 0
+    total = len(nodes)
+
+    for i, row in enumerate(nodes, 1):
+        node_id, name, slug, topic, depth_level, short_description = row
+        node = {
+            "id": node_id, "name": name, "slug": slug,
+            "topic": topic, "depth_level": depth_level,
+            "short_description": short_description,
+        }
+
+        # Related nodes via edges (both directions) — grounds the analogy
+        edges = [
+            {"related_name": r[0], "relationship_type": r[1]}
+            for r in conn.execute(
+                """
+                SELECT n2.name, e.relationship_type
+                FROM edges e
+                JOIN nodes n2 ON n2.id = e.to_node_id
+                WHERE e.from_node_id = %s
+                UNION
+                SELECT n2.name, e.relationship_type
+                FROM edges e
+                JOIN nodes n2 ON n2.id = e.from_node_id
+                WHERE e.to_node_id = %s
+                """,
+                (node_id, node_id),
+            ).fetchall()
+        ]
+
+        # RAG: retrieve grounding facts from source docs for this node
+        grounding = retrieve_grounding(conn, embeddings, node)
+        source_ids = list({str(g["document_id"]) for g in grounding})
+
+        print(f"  {name[:50]} [{len(grounding)} facts]", end=" … ", flush=True)
+        if progress:
+            progress("generate", f"{i}/{total} · {name[:40]}")
+
+        parts = generate_parts(node, edges, grounding, llm, limiter)
+        if parts is None:
+            print("failed")
+            continue
+
+        for card in build_cards(parts):
+            cur = conn.execute(
+                """
+                INSERT INTO cards (node_id, hook, body, format, source_doc_ids, quality_score)
+                VALUES (%s, %s, %s, %s::card_format, %s::uuid[], 0.5)
+                ON CONFLICT DO NOTHING
+                """,
+                (node_id, card["hook"], card["body"], card["format"], source_ids),
+            )
+            cards_added += cur.rowcount
+        conn.commit()
+        print(f"ok — {parts['meme_caption'][:55]!r}")
+        ok += 1
+
+    return ok, cards_added
+
+
 def main() -> None:
     args  = sys.argv[1:]
     limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 100
@@ -216,64 +283,12 @@ def main() -> None:
                 (limit,),
             ).fetchall()
 
-    if not nodes:
-        print("All nodes already have cards. Use --regen to regenerate.")
-        return
+        if not nodes:
+            print("All nodes already have cards. Use --regen to regenerate.")
+            return
 
-    print(f"Generating cards for {len(nodes)} node(s)…\n")
-    ok = failed = 0
+        print(f"Generating cards for {len(nodes)} node(s)…\n")
+        ok, cards = generate_cards_for_nodes(conn, nodes, llm, embeddings, limiter)
 
-    with psycopg.connect(settings.database_url) as conn:
-        for row in nodes:
-            node_id, name, slug, topic, depth_level, short_description = row
-            node = {
-                "id": node_id, "name": name, "slug": slug,
-                "topic": topic, "depth_level": depth_level,
-                "short_description": short_description,
-            }
-
-            # Related nodes via edges (both directions) — grounds the analogy
-            edges = [
-                {"related_name": r[0], "relationship_type": r[1]}
-                for r in conn.execute(
-                    """
-                    SELECT n2.name, e.relationship_type
-                    FROM edges e
-                    JOIN nodes n2 ON n2.id = e.to_node_id
-                    WHERE e.from_node_id = %s
-                    UNION
-                    SELECT n2.name, e.relationship_type
-                    FROM edges e
-                    JOIN nodes n2 ON n2.id = e.from_node_id
-                    WHERE e.to_node_id = %s
-                    """,
-                    (node_id, node_id),
-                ).fetchall()
-            ]
-
-            # RAG: retrieve grounding facts from source docs for this node
-            grounding = retrieve_grounding(conn, embeddings, node)
-            source_ids = list({str(g["document_id"]) for g in grounding})
-
-            print(f"  {name[:50]} [{len(grounding)} facts]", end=" … ", flush=True)
-
-            parts = generate_parts(node, edges, grounding, llm, limiter)
-            if parts is None:
-                failed += 1
-                continue
-
-            for card in build_cards(parts):
-                conn.execute(
-                    """
-                    INSERT INTO cards (node_id, hook, body, format, source_doc_ids, quality_score)
-                    VALUES (%s, %s, %s, %s::card_format, %s::uuid[], 0.5)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (node_id, card["hook"], card["body"], card["format"], source_ids),
-                )
-            conn.commit()
-            print(f"ok — {parts['meme_caption'][:55]!r}")
-            ok += 1
-
-    print(f"\nDone. {ok} nodes → {ok * 3} cards, {failed} failed.")
+    print(f"\nDone. {ok} nodes → {cards} cards.")
     print("Refresh the feed to see them.")

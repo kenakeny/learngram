@@ -2,7 +2,7 @@
 
 import {
   Bell, Bookmark, House, MoreHorizontal, Network,
-  Search, User,
+  Search, Upload, User,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -10,6 +10,7 @@ const items = [
   { icon: House,       label: "Home",          href: "/"       },
   { icon: Search,      label: "Explore",        href: "#"       },
   { icon: Network,     label: "Graph",          href: "/graph"  },
+  { icon: Upload,      label: "Ingest",         href: "/ingest" },
   { icon: Bell,        label: "Notifications",  href: "#"       },
   { icon: Bookmark,    label: "Bookmarks",      href: "#"       },
   { icon: User,        label: "Profile",        href: "#"       },

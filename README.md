@@ -97,6 +97,28 @@ facts into the prompt, and records their document ids on each card
 (`cards.source_doc_ids`). Skipping `embed` still works but produces ungrounded
 cards (the generator falls back to concept description only).
 
+## Ingest your own files (one shot)
+
+Drop a Markdown or PDF and it runs the whole chain automatically — convert →
+extract concepts → build the graph (no manual review) → embed → generate cards.
+
+**CLI:**
+```powershell
+uv run ingest-file path\to\notes.pdf        # one file
+uv run ingest-file path\to\folder           # every supported file in a folder
+uv run ingest-file notes.pdf --land-only    # insert documents only, skip the pipeline
+```
+Supported: `.md .markdown .txt .pdf .docx .pptx .html`. Non-Markdown files are
+converted with [markitdown](https://github.com/microsoft/markitdown).
+
+**Frontend:** open the **Ingest** page (nav rail), drop a file, and watch the
+progress (convert → extract → graph → embed → cards). The API processes it as a
+background job (`POST /ingest`, poll `GET /ingest/{id}`) so long LLM runs don't
+block the request. New cards appear in the Home feed when it finishes.
+
+> Topics are AI-judged: the extractor reuses an existing topic when a concept fits
+> or coins a new one, so the topic set grows with what you ingest.
+
 ## LLM / embedding providers
 
 Set `LLM_PROVIDER` and `EMBEDDING_PROVIDER` in `.env` to `gemini` or `ollama`.

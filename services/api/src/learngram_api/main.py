@@ -5,6 +5,7 @@ from learngram_shared.db.pool import get_pool, close_pool
 from .routes.health import router as health_router
 from .routes.feed import router as feed_router
 from .routes.graph import router as graph_router
+from .routes.ingest import router as ingest_router
 
 
 @asynccontextmanager
@@ -26,3 +27,4 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(feed_router)
 app.include_router(graph_router)
+app.include_router(ingest_router)

@@ -1,6 +1,7 @@
 "use client";
 
 import { Bookmark, BarChart2, Heart, MessageCircle, Repeat2, Share2 } from "lucide-react";
+import { topicBg, topicColor, topicInitials } from "@/lib/utils";
 
 export interface CardData {
   id: string;
@@ -11,15 +12,6 @@ export interface CardData {
   body: string;
   format: string;
 }
-
-const TOPIC_META: Record<string, { color: string; bg: string; initials: string }> = {
-  networking:            { color: "#6b9ab8", bg: "rgba(107,154,184,0.15)", initials: "NW" },
-  caching:               { color: "#b89a5a", bg: "rgba(184,154,90,0.15)",  initials: "CH" },
-  databases:             { color: "#5aa87a", bg: "rgba(90,168,122,0.15)",  initials: "DB" },
-  "distributed-systems": { color: "#9b8fc4", bg: "rgba(155,143,196,0.15)", initials: "DS" },
-  consistency:           { color: "#c47080", bg: "rgba(196,112,128,0.15)", initials: "CS" },
-  messaging:             { color: "#5ab0b0", bg: "rgba(90,176,176,0.15)",  initials: "MQ" },
-};
 
 const FORMAT_LABEL: Record<string, string> = {
   pattern:    "Pattern",
@@ -45,7 +37,7 @@ function EngageBtn({ icon: Icon, label }: { icon: React.ElementType; label: stri
 }
 
 export function FeedCard({ card }: { card: CardData }) {
-  const meta = TOPIC_META[card.topic] ?? { color: "#72747f", bg: "rgba(114,116,127,0.15)", initials: "SD" };
+  const meta = { color: topicColor(card.topic), bg: topicBg(card.topic), initials: topicInitials(card.topic) };
   const displayName = slugToName(card.node_slug);
   const formatLabel = FORMAT_LABEL[card.format] ?? card.format;
 

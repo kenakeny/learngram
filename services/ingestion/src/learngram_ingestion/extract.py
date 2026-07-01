@@ -14,16 +14,19 @@ import psycopg
 from learngram_shared.config import settings
 from learngram_shared.llm.factory import get_llm
 
-CHUNK_SIZE    = 2000   # chars
-CHUNK_OVERLAP = 200
-RATE_DELAY    = 0    # seconds between Ollama calls
+from .text_utils import chunk as _chunk
+
+RATE_DELAY = 0    # seconds between Ollama calls
 
 PROMPT_TEMPLATE = """\
-You are building a system-design knowledge graph. Analyze the text below and \
+You are building a technical knowledge graph. Analyze the text below and \
 extract concepts that could extend the graph.
 
 Existing nodes (do NOT propose these — use their slugs in edges instead):
 {existing_nodes}
+
+Existing topics (reuse one of these when a concept reasonably fits it):
+{existing_topics}
 
 Document title: {title}
 ---
@@ -38,7 +41,7 @@ Respond with ONLY a valid JSON object. No explanation, no markdown, just JSON.
       "name": "Human-readable name",
       "slug": "kebab-case-unique-slug",
       "short_description": "One factual sentence, max 150 chars.",
-      "topic": "<one of: networking|caching|databases|distributed-systems|consistency|messaging>",
+      "topic": "lowercase-kebab-topic",
       "depth_level": <integer 1-5>
     }}
   ],
@@ -57,20 +60,19 @@ Rules:
 - Only propose nodes for concepts NOT in the existing list above.
 - Edges can connect existing nodes to each other OR to newly proposed nodes.
 - depth_level: 1=intro, 2=foundational, 3=intermediate, 4=advanced, 5=specialist.
+- topic: prefer reusing an existing topic above; only invent a new one for a
+  genuinely different area. Keep topics broad and lowercase-kebab (1-3 words),
+  e.g. "databases", "stream-processing" — not a per-concept label.
 - If nothing new is found, return empty arrays — do not invent content.
 """
 
-VALID_TOPICS = {"networking", "caching", "databases", "distributed-systems", "consistency", "messaging"}
-VALID_REL    = {"prerequisite_of", "alternative_to", "used_in", "example_of", "trades_off_with", "related_to", "evolved_from"}
+VALID_REL = {"prerequisite_of", "alternative_to", "used_in", "example_of", "trades_off_with", "related_to", "evolved_from"}
 
 
-def _chunk(text: str) -> list[str]:
-    chunks, start = [], 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        chunks.append(text[start:end])
-        start = end - CHUNK_OVERLAP
-    return chunks
+def _normalize_topic(raw: str) -> str:
+    """Coerce an LLM topic into a clean lowercase-kebab slug (max 40 chars)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(raw).strip().lower()).strip("-")
+    return slug[:40]
 
 
 def _extract_json(raw: str) -> dict:
@@ -91,8 +93,9 @@ def _validate_node(n: dict, existing_slugs: set[str]) -> str | None:
     for f in ("name", "slug", "short_description", "topic", "depth_level"):
         if f not in n:
             return f"missing field {f!r}"
-    if n["topic"] not in VALID_TOPICS:
-        return f"invalid topic {n['topic']!r}"
+    n["topic"] = _normalize_topic(n["topic"])  # AI-judged, free-form → normalized
+    if not n["topic"]:
+        return "empty topic"
     if n["slug"] in existing_slugs:
         return f"slug {n['slug']!r} already exists"
     if not re.match(r"^[a-z0-9-]+$", n["slug"]):
@@ -120,10 +123,12 @@ def _validate_edge(e: dict, all_slugs: set[str]) -> str | None:
 
 
 def process_document(conn: psycopg.Connection, doc_id: uuid.UUID, title: str,
-                     text: str, existing_nodes: list[dict], llm) -> tuple[int, int]:
+                     text: str, existing_nodes: list[dict], llm,
+                     existing_topics: list[str] | None = None) -> tuple[int, int]:
     """Extract proposals from one document. Returns (nodes_added, edges_added)."""
     existing_slugs = {n["slug"] for n in existing_nodes}
     node_list_str  = "\n".join(f"  - {n['slug']} ({n['name']})" for n in existing_nodes)
+    topic_list_str = "\n".join(f"  - {t}" for t in (existing_topics or [])) or "  (none yet)"
 
     chunks         = _chunk(text)
     session_slugs  = set(existing_slugs)   # grows as we propose new nodes
@@ -133,6 +138,7 @@ def process_document(conn: psycopg.Connection, doc_id: uuid.UUID, title: str,
         print(f"    chunk {i}/{len(chunks)} …", end=" ", flush=True)
         prompt = PROMPT_TEMPLATE.format(
             existing_nodes=node_list_str,
+            existing_topics=topic_list_str,
             title=title,
             chunk=chunk,
         )
@@ -199,20 +205,29 @@ def process_document(conn: psycopg.Connection, doc_id: uuid.UUID, title: str,
     return nodes_added, edges_added
 
 
+def load_existing_topics(conn: psycopg.Connection) -> list[str]:
+    """Current topic vocabulary — fed to the extractor so it reuses, not fragments."""
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT topic FROM nodes WHERE topic IS NOT NULL ORDER BY topic"
+    ).fetchall()]
+
+
 def main() -> None:
     args    = sys.argv[1:]
     limit   = int(args[args.index("--limit") + 1]) if "--limit" in args else 50
     doc_id  = args[args.index("--doc-id") + 1]    if "--doc-id" in args else None
 
     llm = get_llm()
-    print(f"LLM provider: {settings.llm_provider} / model: {settings.ollama_gen_model}")
+    model = settings.gemini_gen_model if settings.llm_provider == "gemini" else settings.ollama_gen_model
+    print(f"LLM provider: {settings.llm_provider} / model: {model}")
 
     with psycopg.connect(settings.database_url) as conn:
-        # Load current nodes
+        # Load current nodes + topic vocabulary
         existing_nodes = [
             {"slug": r[0], "name": r[1]}
             for r in conn.execute("SELECT slug, name FROM nodes ORDER BY name").fetchall()
         ]
+        existing_topics = load_existing_topics(conn)
 
         # Select documents to process
         if doc_id:
@@ -247,7 +262,7 @@ def main() -> None:
             if not text:
                 continue
             print(f"  [{doc_id_val}] {title[:70]}")
-            n, e = process_document(conn, doc_id_val, title, text, existing_nodes, llm)
+            n, e = process_document(conn, doc_id_val, title, text, existing_nodes, llm, existing_topics)
             total_n += n
             total_e += e
             print(f"    → {n} node proposals, {e} edge proposals\n")
