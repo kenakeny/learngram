@@ -78,6 +78,25 @@ learngram/
 | 4 — Feed + rabbit hole | 🔜 | Ranked walk · go-deeper traversal · search · topic picker |
 | 5 — Taste iteration | 🔜 | Prompt tuning · corpus expansion · personalization signals |
 
+## Content pipeline (Phases 2–3)
+
+Run from the repo root, in order. Uses `LLM_PROVIDER` / `EMBEDDING_PROVIDER` from `.env`.
+
+```powershell
+uv run ingest-primer          # scrape System Design Primer → documents
+uv run ingest-blogs           # scrape engineering blog RSS → documents
+uv run extract                # LLM proposes new nodes/edges from documents
+uv run review                 # human-approve proposals into the graph
+uv run embed                  # embed nodes + chunk/embed documents (required for RAG)
+uv run generate               # RAG-grounded cards per node → cards table
+```
+
+`embed` populates `nodes.embedding` and the `document_chunks` table. `generate`
+then retrieves the nearest source chunks per node, injects them as grounding
+facts into the prompt, and records their document ids on each card
+(`cards.source_doc_ids`). Skipping `embed` still works but produces ungrounded
+cards (the generator falls back to concept description only).
+
 ## LLM / embedding providers
 
 Set `LLM_PROVIDER` and `EMBEDDING_PROVIDER` in `.env` to `gemini` or `ollama`.

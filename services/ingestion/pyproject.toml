@@ -16,6 +16,7 @@ ingest-primer = "learngram_ingestion.sources.primer:main"
 ingest-blogs  = "learngram_ingestion.sources.blogs:main"
 extract       = "learngram_ingestion.extract:main"
 review        = "learngram_ingestion.review:main"
+embed         = "learngram_ingestion.embed:main"
 generate      = "learngram_ingestion.generate:main"
 
 [tool.uv.sources]

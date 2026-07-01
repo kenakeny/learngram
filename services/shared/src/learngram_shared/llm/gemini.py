@@ -10,6 +10,11 @@ class GeminiLLM:
         except ImportError as e:
             raise ImportError("Install google-genai: uv add 'learngram-shared[gemini]'") from e
 
+        if not settings.gemini_api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=gemini but GEMINI_API_KEY is unset. "
+                "Set the key in .env, or use LLM_PROVIDER=ollama."
+            )
         self._client = genai.Client(api_key=settings.gemini_api_key)
         self._model = model or settings.gemini_gen_model
         self._types = types

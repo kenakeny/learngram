@@ -15,7 +15,10 @@ import time
 import psycopg
 
 from learngram_shared.config import settings
+from learngram_shared.embeddings.factory import get_embeddings
 from learngram_shared.llm.factory import get_llm
+
+from .retrieval import retrieve_grounding
 
 REQUIRED_FIELDS = ("explanation", "analogy", "why_it_works", "takeaway", "meme_caption")
 
@@ -73,6 +76,10 @@ Context (retrieved from the knowledge graph):
 - Related concepts:
 {related_str}
 
+Source facts (retrieved from real system-design docs — your explanation MUST be \
+consistent with these and should draw a concrete detail from them):
+{grounding_str}
+
 Given the context above:
 1. Explain it normally in 100 words or less.
 2. Create an absurd analogy from a completely different domain \
@@ -82,6 +89,8 @@ Given the context above:
 5. Generate a meme caption (max 140 characters, actual meme format, actually funny).
 
 STYLE RULES — violating any of these means you failed:
+- The explanation must stay faithful to the Source facts above. Do not invent \
+numbers, product names, or behavior that contradicts them.
 - BANNED: "It's all about", "Think of it as", "Plus,", "Perfect for", \
 "future-proofing", "drastically improves", "boosting speed", any LinkedIn-speak.
 - The meme caption must use a real meme format: "nobody: / X:", \
@@ -116,23 +125,37 @@ def _truncate(text: str, limit: int) -> str:
     return cut + "…"
 
 
-def build_prompt(node: dict, edges: list[dict]) -> str:
+def build_prompt(node: dict, edges: list[dict], grounding: list[dict]) -> str:
     related = [
         f"  - {e['related_name']} ({e['relationship_type'].replace('_', ' ')})"
         for e in edges[:5]
     ]
     related_str = "\n".join(related) if related else "  (none)"
+
+    if grounding:
+        grounding_str = "\n".join(
+            f'  - "{_truncate(g["content"], 400)}"  (source: {g["title"]})'
+            for g in grounding
+        )
+    else:
+        grounding_str = (
+            "  (no source documents retrieved — rely on the concept description "
+            "above and general knowledge; stay accurate)"
+        )
+
     return PROMPT_TEMPLATE.format(
         name=node["name"],
         desc=node["short_description"],
         topic=node["topic"],
         related_str=related_str,
+        grounding_str=grounding_str,
     )
 
 
-def generate_parts(node: dict, edges: list[dict], llm, limiter: RateLimiter) -> dict | None:
+def generate_parts(node: dict, edges: list[dict], grounding: list[dict],
+                   llm, limiter: RateLimiter) -> dict | None:
     """One LLM call → dict with the 5 brainrot parts, or None on failure."""
-    prompt = build_prompt(node, edges)
+    prompt = build_prompt(node, edges, grounding)
 
     try:
         schema = {
@@ -171,6 +194,7 @@ def main() -> None:
     regen = "--regen" in args
 
     llm = get_llm()
+    embeddings = get_embeddings()
     limiter = RateLimiter(settings.llm_rpm)
     model = settings.gemini_gen_model if settings.llm_provider == "gemini" else settings.ollama_gen_model
     print(f"LLM: {settings.llm_provider} / {model}  ({settings.llm_rpm} rpm)")
@@ -227,9 +251,13 @@ def main() -> None:
                 ).fetchall()
             ]
 
-            print(f"  {name[:50]}", end=" … ", flush=True)
+            # RAG: retrieve grounding facts from source docs for this node
+            grounding = retrieve_grounding(conn, embeddings, node)
+            source_ids = list({str(g["document_id"]) for g in grounding})
 
-            parts = generate_parts(node, edges, llm, limiter)
+            print(f"  {name[:50]} [{len(grounding)} facts]", end=" … ", flush=True)
+
+            parts = generate_parts(node, edges, grounding, llm, limiter)
             if parts is None:
                 failed += 1
                 continue
@@ -237,11 +265,11 @@ def main() -> None:
             for card in build_cards(parts):
                 conn.execute(
                     """
-                    INSERT INTO cards (node_id, hook, body, format, quality_score)
-                    VALUES (%s, %s, %s, %s::card_format, 0.5)
+                    INSERT INTO cards (node_id, hook, body, format, source_doc_ids, quality_score)
+                    VALUES (%s, %s, %s, %s::card_format, %s::uuid[], 0.5)
                     ON CONFLICT DO NOTHING
                     """,
-                    (node_id, card["hook"], card["body"], card["format"]),
+                    (node_id, card["hook"], card["body"], card["format"], source_ids),
                 )
             conn.commit()
             print(f"ok — {parts['meme_caption'][:55]!r}")
