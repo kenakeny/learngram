@@ -133,16 +133,12 @@ def build_prompt(node: dict, edges: list[dict], grounding: list[dict]) -> str:
     ]
     related_str = "\n".join(related) if related else "  (none)"
 
-    if grounding:
-        grounding_str = "\n".join(
-            f'  - "{_truncate(g["content"], 400)}"  (source: {g["title"]})'
-            for g in grounding
-        )
-    else:
-        grounding_str = (
-            "  (no source documents retrieved — rely on the concept description "
-            "above and general knowledge; stay accurate)"
-        )
+    # Full chunk text, not a 400-char stub — the sentence that matched the
+    # query can be anywhere in the chunk. Chunks are already sized (~1600 chars).
+    grounding_str = "\n".join(
+        f'  - "{_truncate(g["content"], 1800)}"  (source: {g["title"]})'
+        for g in grounding
+    )
 
     return PROMPT_TEMPLATE.format(
         system=load_system_prompt(),
@@ -178,6 +174,53 @@ def generate_parts(node: dict, edges: list[dict], grounding: list[dict],
         print(f"missing fields: {', '.join(missing)} — skipping")
         return None
     return parts
+
+
+# Cards scoring below this on the faithfulness check are discarded instead of
+# shipped to the feed. Judged 0-10, stored as quality_score 0.0-1.0.
+MIN_QUALITY = 0.6
+
+JUDGE_PROMPT = """\
+You are a strict technical fact-checker reviewing a social-media study card.
+
+Source facts (ground truth):
+{grounding_str}
+
+Card content to check:
+{content}
+
+Check ONLY factual accuracy: does the card contradict the source facts, or
+invent specific technical claims (numbers, APIs, behaviors, limitations) that
+the sources don't support? Analogies, jokes, and informal tone are fine and
+must NOT lower the score — score the underlying technical claims.
+
+Respond with ONLY a JSON object:
+{{"score": <integer 0-10, 10 = every technical claim is accurate>, "issue": "<one short sentence describing the worst inaccuracy, or empty string>"}}
+"""
+
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {"score": {"type": "integer"}, "issue": {"type": "string"}},
+    "required": ["score"],
+}
+
+
+def judge_faithfulness(content: str, grounding: list[dict], llm, limiter: RateLimiter) -> tuple[float, str]:
+    """Score generated content against its grounding. Returns (0.0-1.0, issue).
+
+    Fails closed: if the judge call itself errors, returns (0.0, reason) so the
+    card is dropped rather than shipped unchecked.
+    """
+    grounding_str = "\n".join(f'  - "{_truncate(g["content"], 1800)}"' for g in grounding)
+    prompt = JUDGE_PROMPT.format(grounding_str=grounding_str, content=content)
+    try:
+        result = generate_with_retry(prompt, JUDGE_SCHEMA, llm, limiter)
+        if not isinstance(result, dict):
+            result = json.loads(result)
+        score = max(0, min(10, int(result["score"])))
+    except Exception as e:
+        return 0.0, f"judge failed: {e}"
+    return score / 10.0, str(result.get("issue", "")).strip()
 
 
 def build_cards(parts: dict) -> list[dict]:
@@ -227,8 +270,13 @@ def generate_cards_for_nodes(conn, nodes, llm, embeddings, limiter, progress=Non
             ).fetchall()
         ]
 
-        # RAG: retrieve grounding facts from source docs for this node
+        # RAG: retrieve grounding facts from source docs for this node.
+        # No grounding → no card. Ungrounded generation is where hallucinated
+        # "general knowledge" cards came from.
         grounding = retrieve_grounding(conn, embeddings, node)
+        if not grounding:
+            print(f"  {name[:50]} — no grounding retrieved, skipping")
+            continue
         source_ids = list({str(g["document_id"]) for g in grounding})
 
         print(f"  {name[:50]} [{len(grounding)} facts]", end=" … ", flush=True)
@@ -240,18 +288,28 @@ def generate_cards_for_nodes(conn, nodes, llm, embeddings, limiter, progress=Non
             print("failed")
             continue
 
+        # Fact-check before shipping: score the technical content against the
+        # grounding and discard anything below MIN_QUALITY.
+        checked = "\n".join(
+            f"{f}: {parts[f]}" for f in ("explanation", "why_it_works", "takeaway", "meme_caption")
+        )
+        quality, issue = judge_faithfulness(checked, grounding, llm, limiter)
+        if quality < MIN_QUALITY:
+            print(f"rejected (faithfulness {quality:.1f}: {issue or 'below threshold'})")
+            continue
+
         for card in build_cards(parts):
             cur = conn.execute(
                 """
                 INSERT INTO cards (node_id, hook, body, format, source_doc_ids, quality_score)
-                VALUES (%s, %s, %s, %s::card_format, %s::uuid[], 0.5)
+                VALUES (%s, %s, %s, %s::card_format, %s::uuid[], %s)
                 ON CONFLICT DO NOTHING
                 """,
-                (node_id, card["hook"], card["body"], card["format"], source_ids),
+                (node_id, card["hook"], card["body"], card["format"], source_ids, quality),
             )
             cards_added += cur.rowcount
         conn.commit()
-        print(f"ok — {parts['meme_caption'][:55]!r}")
+        print(f"ok ({quality:.1f}) — {parts['meme_caption'][:55]!r}")
         ok += 1
 
     return ok, cards_added

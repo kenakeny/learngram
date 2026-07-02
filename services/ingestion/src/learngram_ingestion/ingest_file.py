@@ -71,7 +71,9 @@ def ingest_bytes(conn: psycopg.Connection, filename: str, data: bytes) -> list:
         source_url = f"upload://{filename}#{sec['anchor']}"
         if conn.execute("SELECT 1 FROM documents WHERE source_url = %s", (source_url,)).fetchone():
             continue
-        topics = detect_topics(sec["heading"] + " " + sec["body"], default=["distributed-systems"])
+        # No default tag: an unmatched section stays untagged rather than being
+        # mislabeled distributed-systems (that's how an ML textbook got tagged).
+        topics = detect_topics(sec["heading"] + " " + sec["body"])
         row = conn.execute(
             """
             INSERT INTO documents (source_url, source_type, title, cleaned_text, topic_tags)

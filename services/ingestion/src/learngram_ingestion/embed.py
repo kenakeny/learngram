@@ -21,6 +21,7 @@ from learngram_shared.embeddings.factory import get_embeddings
 from learngram_shared.vectors import to_pgvector
 
 from .text_utils import chunk as _chunk
+from .text_utils import strip_boilerplate
 
 
 def _batched(items: list, size: int):
@@ -40,7 +41,7 @@ def embed_nodes(conn: psycopg.Connection, embeddings, batch: int) -> int:
     done = 0
     for group in _batched(rows, batch):
         texts = [f"{name}. {desc}" for _, name, desc in group]
-        vecs = embeddings.embed(texts)
+        vecs = embeddings.embed(texts, task="document")
         for (node_id, _, _), vec in zip(group, vecs):
             conn.execute(
                 "UPDATE nodes SET embedding = %s::vector WHERE id = %s",
@@ -76,7 +77,7 @@ def chunk_documents(conn: psycopg.Connection, rechunk: bool) -> int:
 
     total = 0
     for doc_id, text in docs:
-        for ordinal, piece in enumerate(_chunk(text)):
+        for ordinal, piece in enumerate(_chunk(strip_boilerplate(text))):
             conn.execute(
                 """
                 INSERT INTO document_chunks (document_id, ordinal, content)
@@ -93,7 +94,12 @@ def chunk_documents(conn: psycopg.Connection, rechunk: bool) -> int:
 
 def embed_chunks(conn: psycopg.Connection, embeddings, batch: int) -> int:
     rows = conn.execute(
-        "SELECT id, content FROM document_chunks WHERE embedding IS NULL"
+        """
+        SELECT c.id, c.content, d.title
+        FROM document_chunks c
+        JOIN documents d ON d.id = c.document_id
+        WHERE c.embedding IS NULL
+        """
     ).fetchall()
     if not rows:
         print("  chunks: all embedded")
@@ -102,8 +108,14 @@ def embed_chunks(conn: psycopg.Connection, embeddings, batch: int) -> int:
     print(f"  chunks: embedding {len(rows)} …", flush=True)
     done = 0
     for group in _batched(rows, batch):
-        vecs = embeddings.embed([content for _, content in group])
-        for (chunk_id, _), vec in zip(group, vecs):
+        # Embed with the document title prepended: a chunk about "the hash ring"
+        # only matches "consistent hashing" queries if the title supplies that
+        # context. The stored content stays title-free (the prompt cites the
+        # title separately).
+        vecs = embeddings.embed(
+            [f"{title}\n{content}" for _, content, title in group], task="document"
+        )
+        for (chunk_id, _, _), vec in zip(group, vecs):
             conn.execute(
                 "UPDATE document_chunks SET embedding = %s::vector WHERE id = %s",
                 (to_pgvector(vec), chunk_id),

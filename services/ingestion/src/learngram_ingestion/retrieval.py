@@ -9,7 +9,13 @@ from learngram_shared.vectors import to_pgvector
 
 # Cosine distance ranges 0 (identical) .. 2 (opposite). Chunks beyond this are
 # too loosely related to be trustworthy grounding, so we drop them.
-MAX_DISTANCE = 0.6
+#
+# Calibrated empirically (2026-07, nomic-embed-text WITH search_query/
+# search_document prefixes, 120 sampled nodes): the 4th-best true match sits at
+# p90 = 0.304 while a random chunk sits at p10 = 0.371 — 0.34 falls in the gap.
+# Recalibrate if the embedding model or prefixing changes: measure top-4 vs
+# random-chunk distances and pick a value between the two distributions.
+MAX_DISTANCE = 0.34
 
 
 def retrieve_grounding(conn, embeddings, node: dict, k: int = 4,
@@ -20,7 +26,7 @@ def retrieve_grounding(conn, embeddings, node: dict, k: int = 4,
     Returns [] when nothing relevant is indexed (e.g. no documents ingested yet).
     """
     query = f"{node['name']}. {node['short_description']}"
-    qvec = to_pgvector(embeddings.embed([query])[0])
+    qvec = to_pgvector(embeddings.embed([query], task="query")[0])
 
     rows = conn.execute(
         """

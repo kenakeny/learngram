@@ -88,11 +88,32 @@ def _extract_json(raw: str) -> dict:
         raise
 
 
+# Concept names are short noun phrases. Anything with code characters or
+# sentence shape is the extractor echoing source text back (the graph used to
+# contain nodes literally named "… defined by s, X).shape.").
+_NAME_CODE_CHARS = re.compile(r"[`{}=;|<>#\\]|\)\.|\.\w+\(")
+
+
+def _validate_name(name: str) -> str | None:
+    if len(name) > 60:
+        return "name too long (max 60 chars)"
+    if len(name.split()) > 8:
+        return "name too wordy (max 8 words)"
+    if name.endswith("."):
+        return "name looks like a sentence"
+    if _NAME_CODE_CHARS.search(name):
+        return "name contains code fragments"
+    return None
+
+
 def _validate_node(n: dict, existing_slugs: set[str]) -> str | None:
     """Return error string or None if valid."""
     for f in ("name", "slug", "short_description", "topic", "depth_level"):
         if f not in n:
             return f"missing field {f!r}"
+    name_err = _validate_name(str(n["name"]).strip())
+    if name_err:
+        return name_err
     n["topic"] = _normalize_topic(n["topic"])  # AI-judged, free-form → normalized
     if not n["topic"]:
         return "empty topic"

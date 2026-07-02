@@ -14,7 +14,14 @@ class OllamaLLM:
         self._base_url = settings.ollama_base_url
 
     def generate(self, prompt: str, schema: dict | None = None) -> str | dict:
-        payload: dict = {"model": self._model, "prompt": prompt, "stream": False}
+        # Explicit num_predict: some models ship Modelfiles with small caps and
+        # a mid-JSON truncation turns into an unparseable response downstream.
+        payload: dict = {
+            "model": self._model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": 2048},
+        }
         if schema:
             # Ask for JSON output; full schema support varies by model
             payload["format"] = "json"

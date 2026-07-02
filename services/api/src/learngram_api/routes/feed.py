@@ -6,6 +6,12 @@ from ..models import FeedCard, FeedResponse, Persona
 
 router = APIRouter()
 
+# Cards below this faithfulness score never reach the feed. The generation
+# judge stores its 0.0-1.0 score in cards.quality_score; legacy cards that were
+# generated before the judge existed sit at the old hardcoded 0.5, so this also
+# retires them without deleting anything.
+MIN_FEED_QUALITY = 0.6
+
 
 class TopicCount(BaseModel):
     topic: str
@@ -39,11 +45,12 @@ async def get_feed(
                 LEFT JOIN personas p ON p.id = c.persona_id
                 WHERE (%s::text IS NULL OR n.topic = %s)
                   AND (%s::text IS NULL OR p.slug = %s)
+                  AND c.quality_score >= %s
                   {"AND c.persona_id IS NOT NULL" if has_persona else ""}
                 ORDER BY random()
                 LIMIT %s
                 """,
-                (topic, topic, persona, persona, limit),
+                (topic, topic, persona, persona, MIN_FEED_QUALITY, limit),
             ).fetchall()
             cards = [
                 FeedCard(
@@ -104,11 +111,12 @@ async def get_topics() -> list[TopicCount]:
                    count(DISTINCT c.id) AS cards,
                    count(DISTINCT n.id) AS nodes
             FROM nodes n
-            LEFT JOIN cards c ON c.node_id = n.id
+            LEFT JOIN cards c ON c.node_id = n.id AND c.quality_score >= %s
             WHERE n.topic IS NOT NULL
             GROUP BY n.topic
             ORDER BY cards DESC, nodes DESC
             """,
+            (MIN_FEED_QUALITY,),
         ).fetchall()
 
     return [TopicCount(topic=r[0], cards=r[1], nodes=r[2]) for r in rows]

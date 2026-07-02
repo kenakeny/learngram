@@ -16,7 +16,7 @@ from learngram_shared.config import settings
 from learngram_shared.embeddings.factory import get_embeddings
 from learngram_shared.llm.factory import get_llm
 
-from .generate import RateLimiter, _truncate
+from .generate import MIN_QUALITY, RateLimiter, _truncate, judge_faithfulness
 from .retrieval import retrieve_grounding
 
 # Per-style formatting rules. `headline` -> cards.hook, `body` -> cards.body.
@@ -34,9 +34,13 @@ STYLE_RULES = {
         "(e.g. \"How does X actually work?\"). "
         "`body` = your clear step-by-step answer with one concrete example."
     ),
+    # The joke is a wrong answer, so the correction ships in the SAME post —
+    # the feed never shows uncorrected misinformation.
     "meme": (
         "`headline` = a meme caption starting like \"i asked ChatGPT what <concept> is and it said:\". "
-        "`body` = the punchline — over-confident, subtly wrong, or obviously copy-pasted."
+        "`wrong_answer` = the punchline — over-confident, subtly wrong, or obviously copy-pasted. "
+        "`correction` = ONE deadpan sentence giving the actually-correct answer. "
+        "The correction is shown right under the joke, so it must be genuinely accurate."
     ),
 }
 
@@ -56,8 +60,15 @@ Format rules for THIS post:
 {style}
 
 Keep it feed-sized. Do not break character. Respond with ONLY a JSON object:
-{{"headline": "...", "body": "..."}}
+{json_template}
 """
+
+# The JSON template must name exactly the fields the style's schema requires,
+# or small models emit the wrong keys and the post is dropped.
+_JSON_TEMPLATES = {
+    "meme": '{"headline": "...", "wrong_answer": "...", "correction": "..."}',
+    "default": '{"headline": "...", "body": "..."}',
+}
 
 
 def load_personas(conn: psycopg.Connection) -> list[dict]:
@@ -70,24 +81,35 @@ def load_personas(conn: psycopg.Connection) -> list[dict]:
 
 
 def _grounding_str(grounding: list[dict]) -> str:
-    if not grounding:
-        return "  (no specific source facts — rely on the concept description and stay accurate)"
-    return "\n".join(f'  - "{_truncate(g["content"], 300)}"' for g in grounding)
+    # Full chunk text — callers skip nodes with no grounding, so no fallback.
+    return "\n".join(f'  - "{_truncate(g["content"], 1800)}"' for g in grounding)
 
 
 def generate_post(persona: dict, node: dict, grounding: list[dict], llm, limiter: RateLimiter) -> dict | None:
+    """One post in the persona's voice. Returns {hook, body, judged} or None.
+
+    `judged` is the text the faithfulness judge must verify: for the meme
+    style that's only the correction (the wrong answer is wrong on purpose);
+    for every other style it's the whole post.
+    """
+    style = persona["post_style"] if persona["post_style"] in STYLE_RULES else "rant"
     prompt = PROMPT.format(
         voice=persona["voice"],
         name=node["name"],
         desc=node["short_description"],
         topic=node["topic"],
         grounding=_grounding_str(grounding),
-        style=STYLE_RULES.get(persona["post_style"], STYLE_RULES["rant"]),
+        style=STYLE_RULES[style],
+        json_template=_JSON_TEMPLATES.get(style, _JSON_TEMPLATES["default"]),
     )
+    if style == "meme":
+        fields = {"headline", "wrong_answer", "correction"}
+    else:
+        fields = {"headline", "body"}
     schema = {
         "type": "object",
-        "properties": {"headline": {"type": "string"}, "body": {"type": "string"}},
-        "required": ["headline"],
+        "properties": {f: {"type": "string"} for f in fields},
+        "required": sorted(fields - {"body"}),
     }
     limiter.wait()
     try:
@@ -98,11 +120,26 @@ def generate_post(persona: dict, node: dict, grounding: list[dict], llm, limiter
         print(f"LLM error: {e}")
         return None
 
+    # Small models drift on key spelling ("wrong-answer" for "wrong_answer");
+    # normalize before reading fields.
+    result = {str(k).strip().lower().replace("-", "_"): v for k, v in result.items()}
+
     headline = str(result.get("headline", "")).strip()
-    body = str(result.get("body", "")).strip()
     if not headline:
         return None
-    return {"hook": _truncate(headline, 200), "body": body}
+
+    if style == "meme":
+        wrong = str(result.get("wrong_answer", "")).strip()
+        correction = str(result.get("correction", "")).strip()
+        if not wrong or not correction:
+            return None
+        body = f"{wrong}\n\nthe actual answer: {correction}"
+        judged = correction
+    else:
+        body = str(result.get("body", "")).strip()
+        judged = f"{headline}\n{body}".strip()
+
+    return {"hook": _truncate(headline, 200), "body": body, "judged": judged}
 
 
 def generate_posts_for_nodes(conn, nodes, personas, llm, embeddings, limiter, progress=None) -> int:
@@ -114,7 +151,12 @@ def generate_posts_for_nodes(conn, nodes, personas, llm, embeddings, limiter, pr
         node_id, name, slug, topic, _depth, desc = row
         node = {"id": node_id, "name": name, "slug": slug, "topic": topic, "short_description": desc}
 
+        # No grounding → no posts for this node (same policy as generate.py).
         grounding = retrieve_grounding(conn, embeddings, node)
+        if not grounding:
+            i += len(personas)
+            print(f"  {name[:30]} — no grounding retrieved, skipping")
+            continue
         source_ids = list({str(g["document_id"]) for g in grounding})
 
         for p in personas:
@@ -126,16 +168,22 @@ def generate_posts_for_nodes(conn, nodes, personas, llm, embeddings, limiter, pr
             if not post:
                 print("failed")
                 continue
+
+            quality, issue = judge_faithfulness(post["judged"], grounding, llm, limiter)
+            if quality < MIN_QUALITY:
+                print(f"rejected (faithfulness {quality:.1f}: {issue or 'below threshold'})")
+                continue
+
             cur = conn.execute(
                 """
                 INSERT INTO cards (node_id, persona_id, hook, body, format, post_style, source_doc_ids, quality_score)
-                VALUES (%s, %s, %s, %s, 'pattern'::card_format, %s, %s::uuid[], 0.5)
+                VALUES (%s, %s, %s, %s, 'pattern'::card_format, %s, %s::uuid[], %s)
                 """,
-                (node_id, p["id"], post["hook"], post["body"], p["post_style"], source_ids),
+                (node_id, p["id"], post["hook"], post["body"], p["post_style"], source_ids, quality),
             )
             made += cur.rowcount
             conn.commit()
-            print("ok")
+            print(f"ok ({quality:.1f})")
     return made
 
 
