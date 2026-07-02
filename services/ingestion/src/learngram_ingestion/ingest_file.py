@@ -98,12 +98,28 @@ def _collect_files(paths: list[str]) -> list[Path]:
     return files
 
 
+def _unprocessed_upload_docs(conn: psycopg.Connection, limit: int) -> list:
+    """Landed 'upload' documents the pipeline never extracted (e.g. run was interrupted)."""
+    q = """
+        SELECT d.id FROM documents d
+        WHERE d.source_type = 'upload' AND d.cleaned_text IS NOT NULL
+          AND d.processed_at IS NULL
+        ORDER BY d.ingested_at
+    """
+    params: tuple = ()
+    if limit > 0:
+        q += " LIMIT %s"
+        params = (limit,)
+    return [r[0] for r in conn.execute(q, params).fetchall()]
+
+
 def main() -> None:
     args = sys.argv[1:]
     land_only = "--land-only" in args
-    paths = [a for a in args if not a.startswith("--")]
+    limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 0  # 0 = no cap
+    paths = [a for a in args if not a.startswith("--") and not a.lstrip("-").isdigit()]
     if not paths:
-        print("usage: uv run ingest-file <path|dir> [more…] [--land-only]")
+        print("usage: uv run ingest-file <path|dir> [more…] [--land-only] [--limit N]")
         sys.exit(1)
 
     files = _collect_files(paths)
@@ -119,13 +135,20 @@ def main() -> None:
             print(f"  {len(ids)} new document section(s)")
             all_doc_ids += ids
 
-        if not all_doc_ids:
-            print("\nNothing new to process (already ingested?).")
-            return
-
         if land_only:
             print(f"\nLanded {len(all_doc_ids)} section(s). Run extract/embed/generate yourself.")
             return
+
+        if not all_doc_ids:
+            # Resume: everything already landed — pick up sections the pipeline
+            # never processed (interrupted run) instead of doing nothing.
+            all_doc_ids = _unprocessed_upload_docs(conn, limit)
+            if not all_doc_ids:
+                print("\nNothing new to process — all sections already went through the pipeline.")
+                return
+            print(f"\nResuming: {len(all_doc_ids)} landed section(s) were never processed.")
+        elif limit > 0:
+            all_doc_ids = all_doc_ids[:limit]
 
         print(f"\nRunning pipeline over {len(all_doc_ids)} section(s)…")
         summary = run_pipeline(conn, all_doc_ids, progress=lambda step, msg: print(f"  [{step}] {msg}"))

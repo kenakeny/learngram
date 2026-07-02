@@ -6,7 +6,7 @@ import { RightSidebar } from "@/components/layout/right-sidebar";
 
 export const metadata: Metadata = {
   title: "learngram",
-  description: "Productive doom-scrolling through system design",
+  description: "Productive doom-scrolling through technical concepts",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

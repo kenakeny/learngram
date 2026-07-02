@@ -43,7 +43,7 @@ export function RightSidebar() {
           </svg>
         </div>
         <input
-          placeholder="Search system design"
+          placeholder="Search concepts"
           style={{
             width: "100%", padding: "12px 16px 12px 42px",
             background: "var(--surface)", border: "1px solid var(--border)",
@@ -57,10 +57,10 @@ export function RightSidebar() {
 
       {/* Trending */}
       <div className="sidebar-card">
-        <div className="sidebar-card-header">Trending in System Design</div>
+        <div className="sidebar-card-header">Trending topics</div>
         {TRENDING.map(({ topic, label, count }) => (
           <div key={topic} className="sidebar-row">
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2 }}>System Design</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>#{label}</div>
             <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>{count}</div>
           </div>

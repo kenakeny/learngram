@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import time
+from pathlib import Path
 
 import psycopg
 
@@ -65,9 +66,20 @@ def generate_with_retry(prompt: str, schema: dict, llm, limiter: RateLimiter) ->
             time.sleep(backoff)
     raise RuntimeError("unreachable")
 
+# The analogy VOICE/STYLE foundation lives in an editable .md that a
+# human-feedback tuning job evolves over time (see tune_analogies.py). We load it
+# at runtime and inject it as {system}. Everything the model MUST emit — the JSON
+# schema, the concept context, and the RAG grounding — stays in code below.
+_SYSTEM_PROMPT_PATH = Path(__file__).parent / "prompts" / "analogy_system.md"
+
+
+def load_system_prompt() -> str:
+    """Read the evolving analogy voice/foundation from analogy_system.md."""
+    return _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
 PROMPT_TEMPLATE = """\
-You're a chronic twitter/internet brainrot user who also happens to be a \
-senior systems engineer. You make system design concepts unforgettable.
+{system}
 
 Context (retrieved from the knowledge graph):
 - Concept: {name}
@@ -76,7 +88,7 @@ Context (retrieved from the knowledge graph):
 - Related concepts:
 {related_str}
 
-Source facts (retrieved from real system-design docs — your explanation MUST be \
+Source facts (retrieved from real technical docs — your explanation MUST be \
 consistent with these and should draw a concrete detail from them):
 {grounding_str}
 
@@ -87,17 +99,6 @@ Given the context above:
 3. Explain why the analogy actually works.
 4. Give a memorable one-line takeaway (ONE sentence, max 100 characters).
 5. Generate a meme caption (max 140 characters, actual meme format, actually funny).
-
-STYLE RULES — violating any of these means you failed:
-- The explanation must stay faithful to the Source facts above. Do not invent \
-numbers, product names, or behavior that contradicts them.
-- BANNED: "It's all about", "Think of it as", "Plus,", "Perfect for", \
-"future-proofing", "drastically improves", "boosting speed", any LinkedIn-speak.
-- The meme caption must use a real meme format: "nobody: / X:", \
-"me explaining X to Y", "X is just Y with extra steps", greentext, \
-"POV:", "X: exists / Y:", lowercase shitpost energy. NOT a product description.
-- The takeaway is ONE punchy sentence. Not two. It must fit on one line.
-- The analogy opens with a concrete scene, not a definition.
 
 Example of GOOD output (for "Load Balancer"):
 {{"explanation": "A load balancer sits in front of your servers and spreads \
@@ -144,6 +145,7 @@ def build_prompt(node: dict, edges: list[dict], grounding: list[dict]) -> str:
         )
 
     return PROMPT_TEMPLATE.format(
+        system=load_system_prompt(),
         name=node["name"],
         desc=node["short_description"],
         topic=node["topic"],

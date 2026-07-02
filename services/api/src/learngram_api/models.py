@@ -1,4 +1,19 @@
+from typing import Literal, Optional
+
 from pydantic import BaseModel
+
+
+class FeedbackRequest(BaseModel):
+    card_id: str
+    rating: Literal["up", "down"]
+    comment: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    id: str
+    card_id: str
+    node_id: Optional[str] = None
+    rating: str
 
 
 class FeedCard(BaseModel):
@@ -9,6 +24,23 @@ class FeedCard(BaseModel):
     hook: str
     body: str
     format: str
+    # Persona ("account") that authored the post, when present.
+    concept_name: Optional[str] = None
+    post_style: Optional[str] = None
+    persona_slug: Optional[str] = None
+    persona_name: Optional[str] = None
+    persona_color: Optional[str] = None
+    persona_emoji: Optional[str] = None
+
+
+class Persona(BaseModel):
+    slug: str
+    display_name: str
+    bio: str
+    post_style: str
+    accent_color: str
+    avatar_emoji: str
+    posts: int
 
 
 class FeedResponse(BaseModel):

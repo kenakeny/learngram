@@ -1,6 +1,6 @@
 # learngram
 
-Productive doom-scrolling — a Twitter-like infinite feed of system-design knowledge, where every "go deeper" drops you into a traversal of a knowledge graph.
+Productive doom-scrolling — a Twitter-like infinite feed of technical knowledge, where every "go deeper" drops you into a traversal of a knowledge graph.
 
 ## Quickstart (PowerShell)
 
@@ -48,7 +48,7 @@ npm --prefix apps/web install
 npm --prefix apps/web run dev
 ```
 
-Open http://localhost:3000 — scroll-snap feed of system-design concept cards.
+Open http://localhost:3000 — scroll-snap feed of technical concept cards.
 
 ---
 

@@ -12,8 +12,9 @@ from learngram_shared.llm.factory import get_llm
 
 from .embed import chunk_documents, embed_chunks, embed_nodes
 from .extract import load_existing_topics, process_document
-from .generate import RateLimiter, generate_cards_for_nodes
+from .generate import RateLimiter
 from .graph_ops import auto_approve_document
+from .personas import generate_posts_for_nodes, load_personas
 
 
 def _noop(step: str, message: str) -> None:
@@ -54,27 +55,35 @@ def run_pipeline(conn, doc_ids: list, progress=None) -> dict:
         nodes_added += n
         edges_added += e
 
+        # Mark processed so an interrupted run can resume where it left off
+        # (even when the document yielded zero proposals).
+        conn.execute("UPDATE documents SET processed_at = NOW() WHERE id = %s", (doc_id,))
+        conn.commit()
+
     # 2. Embed new nodes + chunk/embed the new documents (needed for RAG grounding).
     progress("embed", "embedding concepts and sources")
     embed_nodes(conn, embeddings, batch=16)
     chunk_documents(conn, rechunk=False)
     embed_chunks(conn, embeddings, batch=16)
 
-    # 3. Generate cards only for the concepts this ingest introduced (no cards yet).
+    # 3. One post per persona for the concepts this ingest introduced (no posts yet).
     new_nodes = conn.execute(
         """
         SELECT DISTINCT n.id, n.name, n.slug, n.topic, n.depth_level, n.short_description
         FROM nodes n
         JOIN source_links sl ON sl.node_id = n.id
         WHERE sl.document_id = ANY(%s::uuid[])
-          AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.node_id = n.id)
+          AND NOT EXISTS (
+              SELECT 1 FROM cards c WHERE c.node_id = n.id AND c.persona_id IS NOT NULL
+          )
         """,
         ([str(d) for d in doc_ids],),
     ).fetchall()
 
     cards_added = 0
     if new_nodes:
-        progress("generate", f"writing cards for {len(new_nodes)} concept(s)")
-        _, cards_added = generate_cards_for_nodes(conn, new_nodes, llm, embeddings, limiter, progress)
+        personas = load_personas(conn)
+        progress("generate", f"writing persona posts for {len(new_nodes)} concept(s)")
+        cards_added = generate_posts_for_nodes(conn, new_nodes, personas, llm, embeddings, limiter, progress)
 
     return {"nodes_added": nodes_added, "edges_added": edges_added, "cards_added": cards_added}

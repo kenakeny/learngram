@@ -6,6 +6,7 @@ from .routes.health import router as health_router
 from .routes.feed import router as feed_router
 from .routes.graph import router as graph_router
 from .routes.ingest import router as ingest_router
+from .routes.feedback import router as feedback_router
 
 
 @asynccontextmanager
@@ -28,3 +29,4 @@ app.include_router(health_router)
 app.include_router(feed_router)
 app.include_router(graph_router)
 app.include_router(ingest_router)
+app.include_router(feedback_router)

@@ -19,7 +19,9 @@ extract       = "learngram_ingestion.extract:main"
 review        = "learngram_ingestion.review:main"
 embed         = "learngram_ingestion.embed:main"
 generate      = "learngram_ingestion.generate:main"
+generate-posts = "learngram_ingestion.personas:main"
 ingest-file   = "learngram_ingestion.ingest_file:main"
+tune-analogies = "learngram_ingestion.tune_analogies:main"
 
 [tool.uv.sources]
 learngram-shared = { workspace = true }
